@@ -10,20 +10,19 @@ body{margin:0;font-family:Inter,system-ui;background:#07111f;color:#fff;min-heig
 </head>
 <body><div class="wrap">
 <div class="brand"><div class="logo">⚡</div><div><b>KILAT QR SCANNER</b><div class="muted">SMAN 2 Payakumbuh</div></div></div>
-<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date"></label><label class="field">Kelas<select id="classId"><option value="">Dari KILAT</option></select></label><label class="field">Mapel<input id="subjectId" placeholder="ID mapel"></label><label class="field">Sesi<input id="sessionId" placeholder="ID sesi"></label></div></div>
-<div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button></div>
+<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button></div>
 <div class="card"><div class="muted">HASIL SCAN</div><div id="result" class="result">Belum ada QR yang dipindai.</div></div>
 </div>
 <script>
 const p=new URLSearchParams(location.search);
 document.getElementById('date').value=p.get('date')||new Date().toISOString().slice(0,10);
-document.getElementById('classId').innerHTML='<option value="'+(p.get('classId')||'')+'">'+(p.get('classId')||'Pilih dari KILAT')+'</option>';
-document.getElementById('subjectId').value=p.get('subjectId')||'';
-document.getElementById('sessionId').value=p.get('sessionId')||'';
+document.getElementById('className').value=p.get('className')||p.get('classId')||'Belum dipilih dari KILAT';
+document.getElementById('subjectName').value=p.get('subjectName')||p.get('subjectId')||'Belum dipilih dari KILAT';
+document.getElementById('sessionLabel').value=p.get('sessionLabel')||p.get('sessionId')||'Belum dipilih dari KILAT';
 let scanner;
 function onScan(text){
   let data;try{data=JSON.parse(text)}catch(e){data={student_code:text}}
-  const payload={...data,date:document.getElementById('date').value,class_id:document.getElementById('classId').value,subject_id:document.getElementById('subjectId').value,session_id:document.getElementById('sessionId').value};
+  const payload={...data,date:document.getElementById('date').value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||''};
   document.getElementById('result').textContent='Berhasil membaca: '+(payload.student_code||payload.qr_token);
   const returnUrl=p.get('returnUrl');
   if(returnUrl && payload.student_code && payload.session_id){
