@@ -10,7 +10,7 @@ body{margin:0;font-family:Inter,system-ui;background:#07111f;color:#fff;min-heig
 </head>
 <body><div class="wrap">
 <div class="brand"><div class="logo">⚡</div><div><b>KILAT QR SCANNER</b><div class="muted">SMAN 2 Payakumbuh</div></div></div>
-<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="manualBtn" style="background:#475569">Absensi Manual</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kembali ke KILAT</button></div><div class="card" id="manualCard" style="display:none"><div class="muted">ABSENSI MANUAL</div><input id="manualSearch" class="field" placeholder="Cari nama siswa..." style="width:100%;box-sizing:border-box;margin:10px 0"><div id="manualList" class="result" style="max-height:260px;overflow:auto"></div></div>
+<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="manualBtn" style="background:#475569">Absensi Manual</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kirim ke Spreadsheet</button></div><div class="card" id="manualCard" style="display:none"><div class="muted">ABSENSI MANUAL</div><input id="manualSearch" class="field" placeholder="Cari nama siswa..." style="width:100%;box-sizing:border-box;margin:10px 0"><div id="manualList" class="result" style="max-height:260px;overflow:auto"></div></div>
 <div class="card"><div class="muted">HASIL SCAN</div><div id="result" class="result">Belum ada QR yang dipindai.</div><div id="scanList" class="result" style="margin-top:10px;max-height:220px;overflow:auto">0 siswa tercatat.</div></div>
 </div>
 <script>
@@ -35,39 +35,38 @@ function manualList(){
  const rows=students.filter(x=>!q||String(x.full_name||'').toLowerCase().includes(q)||String(x.student_code||'').toLowerCase().includes(q)||String(x.nis||'').toLowerCase().includes(q));
  box.innerHTML=rows.length?rows.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #22334b"><span><b>${String(x.full_name||'')}</b><br><small>${String(x.student_code||'')}${x.nis?' • NIS '+String(x.nis):''}</small></span><button class="btn" style="width:auto;margin:0;padding:8px 12px" onclick="manualAttend('${String(x.student_id).replace(/'/g,"\\'")}')">HADIR</button></div>`).join(''):'Siswa tidak ditemukan.';
 }
-function postToKilat(payload,waitForAck=true,timeoutMs=30000){
- if(!window.opener||window.opener.closed||!targetOrigin)return Promise.resolve(false);
+async function sendDirectToAppsScript(payload){
+ const apiUrl=p.get('apiUrl')||'';
+ const apiKey=p.get('apiKey')||'';
+ if(!apiUrl||!apiKey) throw new Error('API Scanner belum dikonfigurasi. Buka ulang scanner dari KILAT setelah setupKilat().');
+ const request={action:'ATTENDANCE_BATCH',api_key:apiKey,date:payload.date,class_id:payload.class_id,subject_id:payload.subject_id,session_id:payload.session_id,scans:payload.scans||[]};
+ const body=JSON.stringify(request);
+ // text/plain adalah simple CORS request sehingga browser tidak melakukan preflight.
  try{
-   return new Promise(resolve=>{
-     let done=false;
-     const finish=v=>{if(done)return;done=true;window.removeEventListener('message',onAck);clearTimeout(timer);resolve(v)};
-     const timer=setTimeout(()=>finish(false),timeoutMs);
-     function onAck(e){
-       const d=e.data;
-       if(e.origin!==targetOrigin||e.source!==window.opener||!d||d.type!=='KILAT_SCAN_ACK'||d.requestId!==payload.requestId)return;
-       finish(d.success===true);
-     }
-     if(waitForAck)window.addEventListener('message',onAck);
-     window.opener.postMessage(payload,targetOrigin);
-     if(!waitForAck)finish(true);
-   });
- }catch(e){return Promise.resolve(false)}
+   await fetch(apiUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=UTF-8'},body,keepalive:true});
+   return true;
+ }catch(err){
+   try{
+     const blob=new Blob([body],{type:'text/plain'});
+     if(navigator.sendBeacon && navigator.sendBeacon(apiUrl,blob)) return true;
+   }catch(ignore){}
+   throw err;
+ }
+}
+function markSent(items){
+ items.forEach(item=>{item._sent=true;});
 }
 async function manualAttend(studentId){
  const st=students.find(x=>String(x.student_id)===String(studentId));if(!st)return;
  const already=scans.find(x=>String(x.student_id)===String(studentId));
  if(already){document.getElementById('result').textContent=st.full_name+' sudah ada di daftar '+String(already.method||'QR')+'.';return;}
  const item={student_id:st.student_id,student_code:st.student_code,nis:st.nis||'',full_name:st.full_name,date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',method:'MANUAL',status:'HADIR'};
- const payload={type:'KILAT_SCAN_RESULT',requestId:'MAN-'+Date.now()+'-'+Math.random().toString(36).slice(2),date:item.date,class_id:item.class_id,subject_id:item.subject_id,session_id:item.session_id,scans:[item]};
- document.getElementById('result').textContent='Mengirim absensi manual ke KILAT...';
- if(await postToKilat(payload,true,15000)){
-   scans.push(item);updateList();
-   document.getElementById('result').textContent='✓ '+st.full_name+' berhasil dicatat HADIR.';
-   return;
- }
- // Fallback hanya jika komunikasi popup gagal.
- try{const u=new URL(returnUrl);u.searchParams.set('scanBatch',JSON.stringify([item]));location.href=u.toString();}
- catch(e){document.getElementById('result').textContent='Absensi manual gagal dikirim ke KILAT: '+(e.message||e);}
+ document.getElementById('result').textContent='Mengirim absensi manual langsung ke Spreadsheet...';
+ try{
+   await sendDirectToAppsScript({date:item.date,class_id:item.class_id,subject_id:item.subject_id,session_id:item.session_id,scans:[item]});
+   item._sent=true;scans.push(item);updateList();
+   document.getElementById('result').textContent='✓ '+st.full_name+' — permintaan HADIR berhasil dikirim ke Apps Script.';
+ }catch(e){document.getElementById('result').textContent='Absensi manual gagal dikirim: '+(e.message||e);}
 }
 async function onScan(text){
  if(scanLock)return;scanLock=true;
@@ -93,16 +92,21 @@ document.getElementById('start').onclick=async()=>{
 document.getElementById('manualBtn').onclick=()=>{const c=document.getElementById('manualCard');c.style.display=c.style.display==='none'?'block':'none';manualList()};
 document.getElementById('manualSearch').oninput=manualList;
 document.getElementById('finish').onclick=async()=>{
- if(!returnUrl){document.getElementById('result').textContent='URL kembali ke KILAT tidak ditemukan.';return;}
  if(!scans.length){document.getElementById('result').textContent='Belum ada siswa yang dipindai.';return;}
- const finishBtn=document.getElementById('finish');finishBtn.disabled=true;finishBtn.textContent='Mengirim hasil ke KILAT...';
+ const finishBtn=document.getElementById('finish');finishBtn.disabled=true;finishBtn.textContent='Mengirim ke Spreadsheet...';
  try{
   if(scanner){try{await scanner.stop()}catch(e){}scanner=null;}
-  const payload={type:'KILAT_SCAN_RESULT',requestId:'REQ-'+Date.now()+'-'+Math.random().toString(36).slice(2),date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:scans};
-  console.log('Scanner sending batch:',{count:scans.length,date:payload.date,class_id:payload.class_id,subject_id:payload.subject_id,session_id:payload.session_id});
-  if(await postToKilat(payload,true,30000)){document.getElementById('result').textContent='KILAT menerima '+scans.length+' hasil. Menutup scanner...';setTimeout(()=>window.close(),350);return;}
-  const u=new URL(returnUrl);u.searchParams.set('scanBatch',JSON.stringify(scans));location.href=u.toString();
- }catch(e){finishBtn.disabled=false;finishBtn.textContent='Selesai & Kembali ke KILAT';document.getElementById('result').textContent='Gagal kembali ke KILAT: '+(e.message||e)}
+  const pending=scans.filter(x=>!x._sent).map(x=>{const y={...x};delete y._sent;return y;});
+  if(pending.length){
+    const payload={date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:pending};
+    await sendDirectToAppsScript(payload); markSent(scans.filter(x=>!x._sent));
+  }
+  document.getElementById('result').textContent='✓ '+scans.length+' data absensi sudah dikirim ke Apps Script → Spreadsheet.';
+  setTimeout(()=>window.close(),700);
+ }catch(e){
+  finishBtn.disabled=false;finishBtn.textContent='Selesai & Kirim ke Spreadsheet';
+  document.getElementById('result').textContent='Gagal mengirim ke Apps Script: '+(e.message||e);
+ }
 };
 updateList();manualList();
 </script>
