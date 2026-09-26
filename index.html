@@ -53,14 +53,27 @@ document.getElementById('start').onclick=async()=>{
  }catch(e){scanner=null;document.getElementById('result').textContent='Kamera tidak dapat dibuka: '+e}
 };
 document.getElementById('finish').onclick=async()=>{
- if(!scans.length)return;
+ if(!scans.length){document.getElementById('result').textContent='Belum ada siswa yang dipindai.';return;}
  const returnUrl=p.get('returnUrl');
  if(!returnUrl){document.getElementById('result').textContent='URL kembali ke KILAT tidak ditemukan.';return;}
  try{
   if(scanner){try{await scanner.stop()}catch(e){}scanner=null;}
-  const u=new URL(returnUrl);
-  u.searchParams.set('scanBatch',encodeURIComponent(JSON.stringify(scans)));
-  location.href=u.toString();
+  const payload={type:'KILAT_SCAN_RESULT',date:document.getElementById('date').value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:scans};
+  let sent=false;
+  if(window.opener&&!window.opener.closed){
+    try{
+      const targetOrigin=new URL(returnUrl).origin;
+      window.opener.postMessage(payload,targetOrigin);
+      sent=true;
+      document.getElementById('result').textContent='Hasil scan dikirim ke KILAT. Menutup scanner...';
+      setTimeout(()=>window.close(),350);
+    }catch(e){}
+  }
+  if(!sent){
+    const u=new URL(returnUrl);
+    u.searchParams.set('scanBatch',encodeURIComponent(JSON.stringify(scans)));
+    location.href=u.toString();
+  }
  }catch(e){document.getElementById('result').textContent='Gagal kembali ke KILAT: '+(e.message||e)}
 };
 updateList();
