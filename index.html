@@ -58,16 +58,18 @@ async function manualAttend(studentId){
  const already=scans.find(x=>String(x.student_id)===String(studentId));
  if(already){document.getElementById('result').textContent=st.full_name+' sudah ada di daftar '+String(already.method||'QR')+'.';return;}
  const item={student_id:st.student_id,student_code:st.student_code,nis:st.nis||'',full_name:st.full_name,date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',method:'MANUAL',status:'HADIR'};
- const payload={type:'KILAT_SCAN_RESULT',requestId:'REQ-'+Date.now()+'-'+Math.random().toString(36).slice(2),date:item.date,class_id:item.class_id,subject_id:item.subject_id,session_id:item.session_id,scans:[item]};
  document.getElementById('result').textContent='Mengirim absensi manual ke KILAT...';
- const sent=await postToKilat(payload,true,30000);
- if(!sent){
-   // Fallback yang sama dengan batch: kirim satu siswa lewat URL agar manual tidak bergantung pada postMessage.
-   try{
-     const u=new URL(returnUrl);u.searchParams.set('scanBatch',JSON.stringify([item]));location.href=u.toString();return;
-   }catch(e){document.getElementById('result').textContent='Absensi manual gagal dikirim ke KILAT: '+(e.message||e);return;}
+ // Untuk satu absensi manual, gunakan returnUrl sebagai jalur utama.
+ // Ini tidak bergantung pada window.opener/postMessage dan langsung diproses oleh KILAT.
+ try{
+   const u=new URL(returnUrl);
+   u.searchParams.set('scanBatch',JSON.stringify([item]));
+   location.href=u.toString();
+   return;
+ }catch(e){
+   document.getElementById('result').textContent='Absensi manual gagal dikirim ke KILAT: '+(e.message||e);
+   return;
  }
- scans.push(item);updateList();document.getElementById('result').textContent=st.full_name+' berhasil dicatat sebagai HADIR (MANUAL).';
 }
 async function onScan(text){
  if(scanLock)return;scanLock=true;
