@@ -10,72 +10,87 @@ body{margin:0;font-family:Inter,system-ui;background:#07111f;color:#fff;min-heig
 </head>
 <body><div class="wrap">
 <div class="brand"><div class="logo">⚡</div><div><b>KILAT QR SCANNER</b><div class="muted">SMAN 2 Payakumbuh</div></div></div>
-<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kembali ke KILAT</button></div>
+<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="manualBtn" style="background:#475569">Absensi Manual</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kembali ke KILAT</button></div><div class="card" id="manualCard" style="display:none"><div class="muted">ABSENSI MANUAL</div><input id="manualSearch" class="field" placeholder="Cari nama siswa..." style="width:100%;box-sizing:border-box;margin:10px 0"><div id="manualList" class="result" style="max-height:260px;overflow:auto"></div></div>
 <div class="card"><div class="muted">HASIL SCAN</div><div id="result" class="result">Belum ada QR yang dipindai.</div><div id="scanList" class="result" style="margin-top:10px;max-height:220px;overflow:auto">0 siswa tercatat.</div></div>
 </div>
 <script>
 const p=new URLSearchParams(location.search);
-document.getElementById('date').value=p.get('date')||new Date().toISOString().slice(0,10);
+const date=document.getElementById('date');
+date.value=p.get('date')||'';
 document.getElementById('className').value=p.get('className')||p.get('classId')||'Belum dipilih dari KILAT';
 document.getElementById('subjectName').value=p.get('subjectName')||p.get('subjectId')||'Belum dipilih dari KILAT';
 document.getElementById('sessionLabel').value=p.get('sessionLabel')||p.get('sessionId')||'Belum dipilih dari KILAT';
 let scanner=null,scans=[],scanLock=false;
+let students=[];try{students=JSON.parse(p.get('students')||'[]')}catch(e){students=[]}
 function updateList(){
  const box=document.getElementById('scanList');
- box.innerHTML=scans.length?scans.map((x,i)=>`${i+1}. ${String(x.student_code||x.qr_token||'QR')}`).join('<br>'):'0 siswa tercatat.';
+ box.innerHTML=scans.length?scans.map((x,i)=>`${i+1}. ${String(x.full_name||x.student_code||x.qr_token||'QR')} <small>(${String(x.method||'QR')})</small>`).join('<br>'):'0 siswa tercatat.';
  document.getElementById('finish').disabled=!scans.length;
 }
+function manualList(){
+ const q=(document.getElementById('manualSearch').value||'').toLowerCase().trim();
+ const box=document.getElementById('manualList');
+ const rows=students.filter(x=>!q||String(x.full_name||'').toLowerCase().includes(q)||String(x.student_code||'').toLowerCase().includes(q));
+ box.innerHTML=rows.length?rows.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #22334b"><span><b>${String(x.full_name||'')}</b><br><small>${String(x.student_code||'')}</small></span><button class="btn" style="width:auto;margin:0;padding:8px 12px" onclick="manualAttend('${String(x.student_id).replace(/'/g,"\\'")}')">HADIR</button></div>`).join(''):'Siswa tidak ditemukan.';
+}
+function postToKilat(payload,waitForAck=true){
+ const returnUrl=p.get('returnUrl');
+ if(window.opener&&!window.opener.closed){
+   try{
+     const origin=new URL(returnUrl).origin;
+     return new Promise(resolve=>{
+       let done=false;
+       const timer=setTimeout(()=>{if(done)return;done=true;window.removeEventListener('message',onAck);resolve(false)},3000);
+       function onAck(e){const d=e.data;if(!d||d.type!=='KILAT_SCAN_ACK'||d.requestId!==payload.requestId)return;done=true;clearTimeout(timer);window.removeEventListener('message',onAck);resolve(d.success===true)}
+       if(waitForAck)window.addEventListener('message',onAck);
+       window.opener.postMessage(payload,origin);
+       if(!waitForAck){clearTimeout(timer);resolve(true)}
+     });
+   }catch(e){}
+ }
+ return Promise.resolve(false);
+}
+async function manualAttend(studentId){
+ const st=students.find(x=>String(x.student_id)===String(studentId));if(!st)return;
+ const already=scans.find(x=>String(x.student_id)===String(studentId));
+ if(already){document.getElementById('result').textContent=st.full_name+' sudah ada di daftar '+String(already.method||'QR')+'.';return;}
+ const item={student_id:st.student_id,student_code:st.student_code,full_name:st.full_name,date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',method:'MANUAL',status:'HADIR'};
+ const sent=await postToKilat({type:'KILAT_SCAN_RESULT',requestId:'REQ-'+Date.now()+'-'+Math.random().toString(36).slice(2),date:item.date,class_id:item.class_id,subject_id:item.subject_id,session_id:item.session_id,scans:[item]});
+ if(!sent){document.getElementById('result').textContent='Absensi manual gagal dikirim ke KILAT. Buka scanner dari tombol KILAT.';return;}
+ scans.push(item);updateList();document.getElementById('result').textContent=st.full_name+' dikirim sebagai HADIR (MANUAL).';
+}
 async function onScan(text){
- if(scanLock)return;
- scanLock=true;
+ if(scanLock)return;scanLock=true;
  try{
   let data;try{data=JSON.parse(text)}catch(e){data={student_code:text}}
-  const payload={...data,date:document.getElementById('date').value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||''};
+  const payload={...data,date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',method:'QR'};
   if(!payload.student_code&&!payload.qr_token)throw new Error('QR tidak berisi identitas siswa.');
   if(!payload.session_id)throw new Error('Sesi absensi tidak ditemukan.');
   const key=String(payload.student_code||payload.qr_token);
   if(!scans.some(x=>String(x.student_code||x.qr_token)===key)){
-   scans.push(payload);updateList();
-   document.getElementById('result').textContent='Berhasil membaca: '+key+' — kamera tetap aktif.';
-  }else{
-   document.getElementById('result').textContent='QR '+key+' sudah dipindai; silakan scan siswa berikutnya.';
-  }
+    const known=students.find(x=>String(x.student_code)===String(payload.student_code));
+    if(known){payload.student_id=known.student_id;payload.full_name=known.full_name;}
+    scans.push(payload);updateList();document.getElementById('result').textContent='Berhasil membaca: '+key+' — kamera tetap aktif.';
+  }else document.getElementById('result').textContent='QR '+key+' sudah dipindai; silakan scan siswa berikutnya.';
  }catch(e){document.getElementById('result').textContent='Scan gagal: '+(e.message||e)}
  finally{setTimeout(()=>scanLock=false,900)}
 }
 document.getElementById('start').onclick=async()=>{
- if(scanner)return;
- scanner=new Html5Qrcode('reader');
- try{
-  await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:260}},onScan,()=>{});
-  document.getElementById('start').textContent='Kamera aktif — scan siswa';
-  document.getElementById('start').disabled=true;
- }catch(e){scanner=null;document.getElementById('result').textContent='Kamera tidak dapat dibuka: '+e}
+ if(scanner)return;scanner=new Html5Qrcode('reader');
+ try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:260}},onScan,()=>{});document.getElementById('start').textContent='Kamera aktif — scan siswa';document.getElementById('start').disabled=true}
+ catch(e){scanner=null;document.getElementById('result').textContent='Kamera tidak dapat dibuka: '+e}
 };
+document.getElementById('manualBtn').onclick=()=>{const c=document.getElementById('manualCard');c.style.display=c.style.display==='none'?'block':'none';manualList()};
+document.getElementById('manualSearch').oninput=manualList;
 document.getElementById('finish').onclick=async()=>{
- if(!scans.length){document.getElementById('result').textContent='Belum ada siswa yang dipindai.';return;}
- const returnUrl=p.get('returnUrl');
- if(!returnUrl){document.getElementById('result').textContent='URL kembali ke KILAT tidak ditemukan.';return;}
+ const returnUrl=p.get('returnUrl');if(!returnUrl){document.getElementById('result').textContent='URL kembali ke KILAT tidak ditemukan.';return;}
  try{
   if(scanner){try{await scanner.stop()}catch(e){}scanner=null;}
-  const payload={type:'KILAT_SCAN_RESULT',date:document.getElementById('date').value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:scans};
-  let sent=false;
-  if(window.opener&&!window.opener.closed){
-    try{
-      const targetOrigin=new URL(returnUrl).origin;
-      window.opener.postMessage(payload,targetOrigin);
-      sent=true;
-      document.getElementById('result').textContent='Hasil scan dikirim ke KILAT. Menutup scanner...';
-      setTimeout(()=>window.close(),350);
-    }catch(e){}
-  }
-  if(!sent){
-    const u=new URL(returnUrl);
-    u.searchParams.set('scanBatch',encodeURIComponent(JSON.stringify(scans)));
-    location.href=u.toString();
-  }
+  const payload={type:'KILAT_SCAN_RESULT',requestId:'REQ-'+Date.now()+'-'+Math.random().toString(36).slice(2),date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:scans};
+  if(await postToKilat(payload)){document.getElementById('result').textContent='Semua hasil scan diterima KILAT. Menutup scanner...';setTimeout(()=>window.close(),350);return;}
+  const u=new URL(returnUrl);u.searchParams.set('scanBatch',JSON.stringify(scans));location.href=u.toString();
  }catch(e){document.getElementById('result').textContent='Gagal kembali ke KILAT: '+(e.message||e)}
 };
-updateList();
+updateList();manualList();
 </script>
 </body></html>
