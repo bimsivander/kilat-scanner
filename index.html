@@ -75,6 +75,16 @@ async function sendDirectToAppsScript(payload){
  }
  return true;
 }
+async function finalizeDirectToAppsScript(){
+ const apiUrl=p.get('apiUrl')||'';
+ const apiKey=p.get('scannerKey')||p.get('apiKey')||p.get('key')||'';
+ if(!apiUrl||!apiKey)throw new Error('Koneksi API scanner belum lengkap. Buka scanner dari menu Input Absensi di KILAT.');
+ const url=new URL(apiUrl);
+ url.searchParams.set('api','scan');url.searchParams.set('key',apiKey);
+ url.searchParams.set('payload',JSON.stringify({action:'FINALIZE',date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||''}));
+ await fetch(url.toString(),{method:'GET',mode:'no-cors',cache:'no-store',redirect:'follow'});
+ return true;
+}
 function markSent(items){
  items.forEach(item=>{item._sent=true;});
 }
@@ -124,8 +134,10 @@ document.getElementById('finish').onclick=async()=>{
     const payload={date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:pending};
     await sendDirectToAppsScript(payload); markSent(scans.filter(x=>!x._sent));
   }
-  document.getElementById('result').textContent='✓ Permintaan '+scans.length+' data absensi telah dikirim ke Apps Script. Kembali ke menu Absensi KILAT setelah selesai.';
-  finishBtn.textContent='Absensi Terkirim ✓';
+  // Kunci sesi setelah seluruh scan/manual yang belum terkirim diproses.
+  await finalizeDirectToAppsScript();
+  document.getElementById('result').textContent='✓ Permintaan '+scans.length+' data absensi telah dikirim. Sesi ini telah diminta untuk difinalisasi dan dikunci.';
+  finishBtn.textContent='Absensi Terkirim & Terkunci ✓';
   document.getElementById('returnBtn').style.display='block';
  }catch(e){
   finishBtn.disabled=false;finishBtn.textContent='Selesai & Kirim ke Spreadsheet';
