@@ -10,7 +10,7 @@ body{margin:0;font-family:Inter,system-ui;background:#07111f;color:#fff;min-heig
 </head>
 <body><div class="wrap">
 <div class="brand"><div class="logo">⚡</div><div><b>KILAT QR SCANNER</b><div class="muted">SMAN 2 Payakumbuh</div></div></div>
-<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="manualBtn" style="background:#475569">Absensi Manual</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kirim ke Spreadsheet</button></div><div class="card" id="manualCard" style="display:none"><div class="muted">ABSENSI MANUAL</div><input id="manualSearch" class="field" placeholder="Cari nama siswa..." style="width:100%;box-sizing:border-box;margin:10px 0"><div id="manualList" class="result" style="max-height:260px;overflow:auto"></div></div>
+<div class="card"><div class="grid"><label class="field">Tanggal<input id="date" type="date" readonly></label><label class="field">Kelas<input id="className" readonly></label><label class="field">Mata Pelajaran<input id="subjectName" readonly></label><label class="field">Sesi<input id="sessionLabel" readonly></label></div><div class="muted" style="margin-top:10px">Konteks absensi dikirim otomatis dari KILAT. Tidak perlu memilih kelas lagi di scanner.</div></div><div class="card"><div class="scan" id="reader"></div><button class="btn" id="start">Mulai Kamera</button><button class="btn" id="manualBtn" style="background:#475569">Absensi Manual</button><button class="btn" id="finish" style="background:#16a34a" disabled>Selesai & Kirim ke Spreadsheet</button><button class="btn" id="returnBtn" style="background:#475569;display:none" type="button">Kembali ke Menu Absensi KILAT</button></div><div class="card" id="manualCard" style="display:none"><div class="muted">ABSENSI MANUAL</div><input id="manualSearch" class="field" placeholder="Cari nama siswa..." style="width:100%;box-sizing:border-box;margin:10px 0"><div id="manualList" class="result" style="max-height:260px;overflow:auto"></div></div>
 <div class="card"><div class="muted">HASIL SCAN</div><div id="result" class="result">Belum ada QR yang dipindai.</div><div id="scanList" class="result" style="margin-top:10px;max-height:220px;overflow:auto">0 siswa tercatat.</div></div>
 </div>
 <script>
@@ -24,6 +24,26 @@ let scanner=null,scans=[],scanLock=false;
 let students=[];try{students=JSON.parse(p.get('students')||'[]')}catch(e){students=[]}
 const returnUrl=p.get('returnUrl')||'';
 const targetOrigin=p.get('scannerOrigin')||((()=>{try{return new URL(returnUrl).origin}catch(e){return ''}})());
+function getKilatReturnUrl(){
+ try{
+   const u=new URL(returnUrl||'');
+   u.searchParams.set('returnPage','attendance');
+   return u.toString();
+ }catch(e){return returnUrl||'';}
+}
+function returnToKilat(){
+ const context={date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||''};
+ const backUrl=getKilatReturnUrl();
+ if(window.opener&&!window.opener.closed){
+   try{window.opener.postMessage({type:'KILAT_SCANNER_RETURN',context},targetOrigin||'*');window.opener.focus();}catch(e){}
+   setTimeout(()=>{
+     try{window.close()}catch(e){}
+     setTimeout(()=>{if(!window.closed&&backUrl)location.assign(backUrl);},350);
+   },180);
+ }else if(backUrl){location.assign(backUrl)}
+ else{document.getElementById('result').textContent='URL KILAT untuk kembali tidak tersedia. Tutup tab scanner lalu pilih menu Absensi pada KILAT.';}
+}
+
 function updateList(){
  const box=document.getElementById('scanList');
  box.innerHTML=scans.length?scans.map((x,i)=>`${i+1}. ${String(x.full_name||x.student_code||x.qr_token||'QR')} <small>(${String(x.method||'QR')})</small>`).join('<br>'):'0 siswa tercatat.';
@@ -37,21 +57,23 @@ function manualList(){
 }
 async function sendDirectToAppsScript(payload){
  const apiUrl=p.get('apiUrl')||'';
- const apiKey=p.get('apiKey')||'';
- if(!apiUrl||!apiKey) throw new Error('API Scanner belum dikonfigurasi. Buka ulang scanner dari KILAT setelah setupKilat().');
- const request={action:'ATTENDANCE_BATCH',api_key:apiKey,date:payload.date,class_id:payload.class_id,subject_id:payload.subject_id,session_id:payload.session_id,scans:payload.scans||[]};
- const body=JSON.stringify(request);
- // text/plain adalah simple CORS request sehingga browser tidak melakukan preflight.
- try{
-   await fetch(apiUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=UTF-8'},body,keepalive:true});
-   return true;
- }catch(err){
-   try{
-     const blob=new Blob([body],{type:'text/plain'});
-     if(navigator.sendBeacon && navigator.sendBeacon(apiUrl,blob)) return true;
-   }catch(ignore){}
-   throw err;
+ // Kompatibel dengan nama parameter yang pernah dipakai versi KILAT sebelumnya.
+ const apiKey=p.get('scannerKey')||p.get('apiKey')||p.get('key')||'';
+ if(!apiUrl||!apiKey) throw new Error('Koneksi API scanner belum lengkap. Buka scanner dari menu Input Absensi di KILAT.');
+ const context={date:payload.date||date.value,class_id:payload.class_id||p.get('classId')||'',subject_id:payload.subject_id||p.get('subjectId')||'',session_id:payload.session_id||p.get('sessionId')||''};
+ const items=Array.isArray(payload.scans)?payload.scans:[];
+ if(!items.length) return true;
+ // Backend Code.gs saat ini menerima satu objek pada ?api=scan&key=...&payload=...
+ // Kirim satu per satu agar URL tetap pendek dan tidak membutuhkan CORS/preflight.
+ for(const item of items){
+   const one={...context,...item};
+   const url=new URL(apiUrl);
+   url.searchParams.set('api','scan');
+   url.searchParams.set('key',apiKey);
+   url.searchParams.set('payload',JSON.stringify(one));
+   await fetch(url.toString(),{method:'GET',mode:'no-cors',cache:'no-store',redirect:'follow'});
  }
+ return true;
 }
 function markSent(items){
  items.forEach(item=>{item._sent=true;});
@@ -91,6 +113,7 @@ document.getElementById('start').onclick=async()=>{
 };
 document.getElementById('manualBtn').onclick=()=>{const c=document.getElementById('manualCard');c.style.display=c.style.display==='none'?'block':'none';manualList()};
 document.getElementById('manualSearch').oninput=manualList;
+document.getElementById('returnBtn').onclick=returnToKilat;
 document.getElementById('finish').onclick=async()=>{
  if(!scans.length){document.getElementById('result').textContent='Belum ada siswa yang dipindai.';return;}
  const finishBtn=document.getElementById('finish');finishBtn.disabled=true;finishBtn.textContent='Mengirim ke Spreadsheet...';
@@ -101,8 +124,9 @@ document.getElementById('finish').onclick=async()=>{
     const payload={date:date.value,class_id:p.get('classId')||'',subject_id:p.get('subjectId')||'',session_id:p.get('sessionId')||'',scans:pending};
     await sendDirectToAppsScript(payload); markSent(scans.filter(x=>!x._sent));
   }
-  document.getElementById('result').textContent='✓ '+scans.length+' data absensi sudah dikirim ke Apps Script → Spreadsheet.';
-  setTimeout(()=>window.close(),700);
+  document.getElementById('result').textContent='✓ Permintaan '+scans.length+' data absensi telah dikirim ke Apps Script. Kembali ke menu Absensi KILAT setelah selesai.';
+  finishBtn.textContent='Absensi Terkirim ✓';
+  document.getElementById('returnBtn').style.display='block';
  }catch(e){
   finishBtn.disabled=false;finishBtn.textContent='Selesai & Kirim ke Spreadsheet';
   document.getElementById('result').textContent='Gagal mengirim ke Apps Script: '+(e.message||e);
